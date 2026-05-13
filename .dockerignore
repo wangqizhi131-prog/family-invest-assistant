@@ -1,0 +1,8 @@
+node_modules
+dist
+data
+tools
+*.log
+REMOTE_URL.txt
+.env
+.DS_Store
