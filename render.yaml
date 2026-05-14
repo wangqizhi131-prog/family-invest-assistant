@@ -19,7 +19,7 @@ services:
       - key: STRICT_REALTIME
         value: true
       - key: ITICK_BASE_URL
-        value: https://api.itick.io
+        value: https://api-free.itick.org
       - key: ITICK_FUND_REGION
         value: CN
       - key: ITICK_TOKEN

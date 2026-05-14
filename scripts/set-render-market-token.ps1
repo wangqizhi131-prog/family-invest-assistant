@@ -1,5 +1,3 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [Parameter(Mandatory = $true)]
   [string]$Token,
@@ -7,6 +5,8 @@ param(
   [string]$ServiceId = "srv-d82hdojrjlhs73dh2i8g",
   [string]$RenderConfig = "$env:USERPROFILE\.render\cli.yaml"
 )
+
+$ErrorActionPreference = "Stop"
 
 if (-not (Test-Path -LiteralPath $RenderConfig)) {
   throw "Render CLI config not found. Run render login first."
@@ -26,7 +26,7 @@ $headers = @{
 $values = [ordered]@{
   MARKET_PROVIDER = "itick"
   STRICT_REALTIME = "true"
-  ITICK_BASE_URL = "https://api.itick.io"
+  ITICK_BASE_URL = "https://api-free.itick.org"
   ITICK_FUND_REGION = "CN"
   ITICK_TOKEN = $Token
 }
