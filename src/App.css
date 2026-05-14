@@ -517,6 +517,48 @@
   font-size: 12px;
 }
 
+.kline-box {
+  height: 128px;
+  margin-top: 14px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #f2f6f3;
+  color: #1f8f61;
+}
+
+.kline-box svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.empty-chart {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #7d8a85;
+  font-size: 13px;
+}
+
+.link-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.link-row a {
+  min-height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #edf4f1;
+  color: #173a31;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .lookup-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;

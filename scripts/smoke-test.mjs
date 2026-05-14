@@ -89,6 +89,12 @@ try {
   assert.equal(market.data.funds, undefined)
   assert.ok(Array.isArray(market.data.stocks))
 
+  const kline = await request('/api/market/kline?stock=sh600000&limit=20')
+  assert.equal(kline.response.status, 200)
+  assert.equal(kline.data.stock.code, '600000')
+  assert.ok(Array.isArray(kline.data.bars))
+  assert.ok(kline.data.analysis.summary)
+
   const lookup = await request('/api/stocks/lookup?code=600000')
   assert.equal(lookup.response.status, 200)
   assert.equal(lookup.data.stock.code, '600000')
@@ -149,6 +155,12 @@ try {
   assert.equal(portfolio.response.status, 200)
   assert.equal(portfolio.data.holdings.length, 1)
   assert.equal(portfolio.data.watchlist.length, 1)
+
+  const analysis = await request('/api/analysis', { headers })
+  assert.equal(analysis.response.status, 200)
+  assert.ok(analysis.data.items.length >= 2)
+  assert.ok(analysis.data.items[0].links.newsSearch)
+  assert.ok(analysis.data.items[0].technical.summary)
 
   const removeHolding = await request(`/api/holdings/${holding.data.holding.id}`, { method: 'DELETE', headers })
   assert.equal(removeHolding.response.status, 200)

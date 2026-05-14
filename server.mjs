@@ -287,6 +287,128 @@ const queryItickStock = async ({ market, code }) => {
   })
 }
 
+const queryItickKline = async ({ market, code, limit = 60 }) => {
+  if (!process.env.ITICK_TOKEN) {
+    return { bars: [], warning: '未配置授权实时行情密钥，无法获取K线' }
+  }
+  const region = market === 'sh' ? 'SH' : market === 'sz' ? 'SZ' : 'BJ'
+  return withQuoteCache(`itick-kline-${region}-${code}-${limit}`, async () => {
+    const url = buildItickUrl('/stock/kline', { region, code, kType: 8, limit })
+    try {
+      const payload = await fetchJson(url, process.env.ITICK_TOKEN)
+      const rows = Array.isArray(payload?.data) ? payload.data : []
+      return {
+        bars: rows.map((item) => ({
+          time: item.t,
+          open: asNumber(item.o),
+          high: asNumber(item.h),
+          low: asNumber(item.l),
+          close: asNumber(item.c),
+          volume: asNumber(item.v),
+          turnover: asNumber(item.tu),
+        })),
+      }
+    } catch (error) {
+      return {
+        bars: [],
+        warning:
+          error?.status === 429
+            ? 'K线接口当前限流，稍后会自动重试'
+            : `K线接口不可用：${error?.message || '未知错误'}`,
+      }
+    }
+  })
+}
+
+const average = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0)
+
+const analyzeKline = (bars) => {
+  const closes = bars.map((bar) => bar.close).filter((value) => value > 0)
+  const volumes = bars.map((bar) => bar.volume).filter((value) => value > 0)
+  const last = bars.at(-1)
+  const prev = bars.at(-2)
+  const ma5 = average(closes.slice(-5))
+  const ma10 = average(closes.slice(-10))
+  const ma20 = average(closes.slice(-20))
+  const recentHigh = Math.max(...bars.slice(-20).map((bar) => bar.high), 0)
+  const recentLow = Math.min(...bars.slice(-20).map((bar) => bar.low).filter((value) => value > 0))
+  const change20 = closes.length >= 20 ? ((closes.at(-1) - closes.at(-20)) / closes.at(-20)) * 100 : 0
+  const volumeRatio = volumes.length >= 10 ? (volumes.at(-1) || 0) / average(volumes.slice(-10, -1)) : 1
+  const dayChange = last && prev ? ((last.close - prev.close) / prev.close) * 100 : 0
+  const volatility = bars.length ? average(bars.slice(-20).map((bar) => ((bar.high - bar.low) / bar.close) * 100)) : 0
+  let score = 50
+  if (last?.close > ma5) score += 8
+  if (ma5 > ma10) score += 8
+  if (ma10 > ma20) score += 8
+  if (change20 > 8) score += 8
+  if (change20 < -8) score -= 10
+  if (volumeRatio > 1.6 && dayChange > 0) score += 6
+  if (volumeRatio > 1.8 && dayChange < 0) score -= 8
+  if (last?.close < ma20) score -= 8
+  score = Math.max(5, Math.min(95, Math.round(score)))
+  const trend = score >= 68 ? '偏强' : score <= 38 ? '偏弱' : '震荡'
+  return {
+    summary: `${trend}走势，20日涨跌 ${change20.toFixed(2)}%，量能 ${(volumeRatio || 1).toFixed(2)} 倍`,
+    trend,
+    score,
+    ma5,
+    ma10,
+    ma20,
+    change20,
+    dayChange,
+    volumeRatio,
+    volatility,
+    support: Number.isFinite(recentLow) ? recentLow : 0,
+    resistance: recentHigh,
+  }
+}
+
+const analysisLinks = (stock) => {
+  const keyword = encodeURIComponent(`${stock.name || ''} ${stock.code}`.trim())
+  return {
+    newsSearch: `https://so.eastmoney.com/news/s?keyword=${keyword}`,
+    quotePage: `https://quote.eastmoney.com/${stock.market}${stock.code}.html`,
+    announcements: `https://data.eastmoney.com/notices/stock/${stock.code}.html`,
+    policySearch: `https://www.gov.cn/zhengce/zuixin/?q=${encodeURIComponent(stock.theme || stock.name || stock.code)}`,
+    regulator: 'https://www.csrc.gov.cn/',
+  }
+}
+
+const buildStockAnalysis = async (stock) => {
+  const enriched = await enrichStock(stock)
+  const kline = await queryItickKline({ market: enriched.market, code: enriched.code, limit: 80 })
+  const technical = analyzeKline(kline.bars)
+  const quote = enriched.quote
+  let suggestion = '观察'
+  let tone = 'watch'
+  if (quote?.verified && technical.score >= 70 && technical.volumeRatio < 2.5) {
+    suggestion = '趋势偏强，可小仓位跟踪，不追高'
+    tone = 'buy'
+  } else if (quote?.verified && technical.score <= 38) {
+    suggestion = '趋势偏弱，优先控制仓位'
+    tone = 'sell'
+  } else if (quote?.verified) {
+    suggestion = '震荡区间，等待突破或回踩确认'
+    tone = 'hold'
+  }
+  return {
+    stock: {
+      id: stock.id,
+      code: enriched.code,
+      market: enriched.market,
+      name: enriched.name,
+      theme: enriched.theme,
+      note: enriched.note,
+    },
+    quote,
+    kline,
+    technical,
+    links: analysisLinks(enriched),
+    suggestion,
+    tone,
+  }
+}
+
 const parseStocks = (value) =>
   String(value || '')
     .split(',')
@@ -465,6 +587,22 @@ app.get('/api/market', async (req, res) => {
   res.json({ stocks: stockQuotes, updatedAt: nowIso() })
 })
 
+app.get('/api/market/kline', async (req, res) => {
+  const parsed = parseStocks(req.query.stock || req.query.stocks).at(0)
+  if (!parsed) {
+    res.status(400).json({ error: '请输入股票代码' })
+    return
+  }
+  const kline = await queryItickKline({ ...parsed, limit: asNumber(req.query.limit, 60) })
+  res.json({
+    stock: parsed,
+    bars: kline.bars,
+    warning: kline.warning,
+    analysis: analyzeKline(kline.bars),
+    updatedAt: nowIso(),
+  })
+})
+
 app.get('/api/advice', requireAuth, async (req, res) => {
   const holdings = req.db.holdings[req.user.id] || []
   const stocks = holdings.map((holding) => `${holding.market}${holding.code}`)
@@ -518,6 +656,17 @@ app.get('/api/advice', requireAuth, async (req, res) => {
     }
   })
   res.json({ advice, updatedAt: nowIso() })
+})
+
+app.get('/api/analysis', requireAuth, async (req, res) => {
+  const holdings = req.db.holdings[req.user.id] || []
+  const watchlist = req.db.watchlist[req.user.id] || []
+  const stocks = new Map()
+  for (const stock of [...holdings, ...watchlist]) {
+    stocks.set(`${stock.market}${stock.code}`, stock)
+  }
+  const items = await Promise.all([...stocks.values()].map((stock) => buildStockAnalysis(stock)))
+  res.json({ items, updatedAt: nowIso() })
 })
 
 if (existsSync(distDir)) {

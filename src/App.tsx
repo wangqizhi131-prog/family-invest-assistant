@@ -67,14 +67,41 @@ type ImportRecord = {
   createdAt: string
 }
 
-type Advice = {
-  id: string
-  holding: Holding
+type KlineBar = {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+type AnalysisItem = {
+  stock: StockBase
+  quote?: Quote
+  kline: { bars: KlineBar[]; warning?: string }
+  technical: {
+    summary: string
+    trend: string
+    score: number
+    ma5: number
+    ma10: number
+    ma20: number
+    change20: number
+    dayChange: number
+    volumeRatio: number
+    support: number
+    resistance: number
+  }
+  links: {
+    newsSearch: string
+    quotePage: string
+    announcements: string
+    policySearch: string
+    regulator: string
+  }
+  suggestion: string
   tone: ActionTone
-  action: string
-  reasons: string[]
-  confidence: number
-  dataLabel: string
 }
 
 const emptyHolding: Holding = {
@@ -119,78 +146,6 @@ const stockKey = (stock: Pick<StockBase, 'market' | 'code'>) => `${stock.market}
 const getQuote = (stock: Pick<StockBase, 'code'>, market?: MarketData) => market?.stocks.find((item) => item.code === stock.code)
 const quotePrice = (holding: Holding, quote?: Quote) => quote?.price ?? holding.cost
 const stockValue = (holding: Holding, market?: MarketData) => holding.shares * quotePrice(holding, getQuote(holding, market))
-
-function buildAdvice(holdings: Holding[], market?: MarketData): Advice[] {
-  const total = holdings.reduce((sum, holding) => sum + stockValue(holding, market), 0)
-  return holdings
-    .map((holding) => {
-      const quote = getQuote(holding, market)
-      const value = stockValue(holding, market)
-      const weight = total > 0 ? (value / total) * 100 : 0
-      const price = quotePrice(holding, quote)
-      const gain = holding.cost > 0 ? ((price - holding.cost) / holding.cost) * 100 : 0
-      const day = quote?.changePct ?? 0
-      const dataLabel = quote?.verified
-        ? `实时源 ${quote.source}，${new Date(quote.updatedAt).toLocaleTimeString()}`
-        : quote?.warning || '未取得可信实时行情，暂停交易建议'
-
-      if (!quote?.verified) {
-        return {
-          id: holding.id,
-          holding,
-          tone: 'watch' as const,
-          action: '行情未验证，只观察，不交易',
-          reasons: ['实时行情源不可用或被限流', '为避免虚假信号，本工具暂停具体买卖建议'],
-          confidence: 30,
-          dataLabel,
-        }
-      }
-
-      const reasons = [
-        `今日涨跌 ${pct(day)}`,
-        `相对成本 ${pct(gain)}`,
-        `当前仓位约 ${weight.toFixed(1)}%，目标 ${holding.targetWeight}%`,
-      ]
-
-      if (day <= -1.5 && weight + 2 < holding.targetWeight && holding.planAmount > 0) {
-        return {
-          id: holding.id,
-          holding,
-          tone: 'buy' as const,
-          action: `14:35-14:50 可考虑分批加仓 ${money(holding.planAmount)}`,
-          reasons: [...reasons, '下跌且低于目标仓位，适合按计划小额处理'],
-          confidence: 72,
-          dataLabel,
-        }
-      }
-
-      if ((gain >= 18 || weight > holding.targetWeight + 4) && value > 0) {
-        return {
-          id: holding.id,
-          holding,
-          tone: 'sell' as const,
-          action: `可考虑减仓约 ${money(value * 0.15)}`,
-          reasons: [...reasons, '收益或仓位已超过计划，优先把风险降回可控区间'],
-          confidence: 66,
-          dataLabel,
-        }
-      }
-
-      return {
-        id: holding.id,
-        holding,
-        tone: 'hold' as const,
-        action: '暂不交易，继续观察',
-        reasons,
-        confidence: 55,
-        dataLabel,
-      }
-    })
-    .sort((a, b) => {
-      const order: Record<ActionTone, number> = { sell: 0, buy: 1, watch: 2, hold: 3 }
-      return order[a.tone] - order[b.tone] || b.confidence - a.confidence
-    })
-}
 
 function AuthGate({ onAuth }: { onAuth: (token: string, user: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('register')
@@ -259,6 +214,7 @@ function App() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [lookupLoading, setLookupLoading] = useState(false)
+  const [analysis, setAnalysis] = useState<AnalysisItem[]>([])
 
   const marketKeys = useMemo(() => {
     const map = new Map<string, StockBase>()
@@ -293,6 +249,15 @@ function App() {
     }
   }, [marketKeys])
 
+  const loadAnalysis = useCallback(async () => {
+    if (!token) return
+    const response = await fetch('/api/analysis', { headers: { Authorization: `Bearer ${token}` } })
+    if (response.ok) {
+      const data = await response.json()
+      setAnalysis(data.items || [])
+    }
+  }, [token])
+
   useEffect(() => {
     const timer = window.setTimeout(() => void loadPortfolio(), 0)
     return () => window.clearTimeout(timer)
@@ -301,12 +266,16 @@ function App() {
   useEffect(() => {
     if (!token) return
     const initial = window.setTimeout(() => void refreshMarket(), 0)
+    const analysisInitial = window.setTimeout(() => void loadAnalysis(), 500)
     const timer = window.setInterval(() => void refreshMarket(), 60_000)
+    const analysisTimer = window.setInterval(() => void loadAnalysis(), 120_000)
     return () => {
       window.clearTimeout(initial)
+      window.clearTimeout(analysisInitial)
       window.clearInterval(timer)
+      window.clearInterval(analysisTimer)
     }
-  }, [refreshMarket, token])
+  }, [loadAnalysis, refreshMarket, token])
 
   const totalValue = holdings.reduce((sum, holding) => sum + stockValue(holding, market), 0)
   const todayMove = holdings.reduce((sum, holding) => {
@@ -316,8 +285,6 @@ function App() {
   }, 0)
   const verifiedCount = market?.stocks.filter((item) => item.verified).length || 0
   const unverifiedCount = market?.stocks.filter((item) => !item.verified).length || 0
-  const advices = useMemo(() => buildAdvice(holdings, market), [holdings, market])
-
   const saveHolding = async () => {
     if (!token) return
     const method = editingHoldingId ? 'PATCH' : 'POST'
@@ -332,6 +299,7 @@ function App() {
     setEditingHoldingId('')
     setMessage('已保存持仓')
     await loadPortfolio()
+    await loadAnalysis()
   }
 
   const lookupStock = async (code: string, target: 'holding' | 'watch') => {
@@ -382,18 +350,21 @@ function App() {
     setEditingWatchId('')
     setMessage('已保存自选')
     await loadPortfolio()
+    await loadAnalysis()
   }
 
   const deleteHolding = async (id: string) => {
     if (!token) return
     await fetch(`/api/holdings/${id}`, { method: 'DELETE', headers: authHeaders(token) })
     await loadPortfolio()
+    await loadAnalysis()
   }
 
   const deleteWatch = async (id: string) => {
     if (!token) return
     await fetch(`/api/watchlist/${id}`, { method: 'DELETE', headers: authHeaders(token) })
     await loadPortfolio()
+    await loadAnalysis()
   }
 
   const uploadScreenshot = async (file: File) => {
@@ -468,23 +439,8 @@ function App() {
 
       {tab === '建议' && (
         <section className="content-stack">
-          {advices.length === 0 && <article className="settings-panel"><p>先在“持仓”里录入A股，再生成建议。</p></article>}
-          {advices.map((advice) => (
-            <article className={`advice-card ${advice.tone}`} key={advice.id}>
-              <div className="card-head">
-                <div>
-                  <p>A股 · {advice.holding.theme || advice.holding.code}</p>
-                  <h2>{advice.holding.name}</h2>
-                </div>
-                <span>{advice.confidence}</span>
-              </div>
-              <div className="action-line">{advice.action}</div>
-              <ul className="reason-list">
-                {advice.reasons.map((reason) => <li key={reason}>{reason}</li>)}
-              </ul>
-              <div className="compliance-tag">{advice.dataLabel}</div>
-            </article>
-          ))}
+          {analysis.length === 0 && <article className="settings-panel"><p>先在“行情”或“持仓”里录入A股，再生成分析。</p></article>}
+          {analysis.map((item) => <AnalysisCard key={`${item.stock.market}${item.stock.code}`} item={item} />)}
         </section>
       )}
 
@@ -605,6 +561,53 @@ function StockCard({ stock, quote, value, detail, onEdit, onDelete }: { stock: S
         <button onClick={onEdit} aria-label="编辑"><Edit3 size={16} /></button>
         <button onClick={onDelete} aria-label="删除"><Trash2 size={16} /></button>
       </div>
+    </article>
+  )
+}
+
+function AnalysisCard({ item }: { item: AnalysisItem }) {
+  const bars = item.kline.bars || []
+  const closes = bars.map((bar) => bar.close)
+  const min = Math.min(...closes)
+  const max = Math.max(...closes)
+  const points = closes.map((close, index) => {
+    const x = closes.length <= 1 ? 0 : (index / (closes.length - 1)) * 100
+    const y = max === min ? 50 : 90 - ((close - min) / (max - min)) * 80
+    return `${x.toFixed(2)},${y.toFixed(2)}`
+  }).join(' ')
+
+  return (
+    <article className={`advice-card ${item.tone}`}>
+      <div className="card-head">
+        <div>
+          <p>{item.stock.market.toUpperCase()} {item.stock.code} · {item.stock.theme || 'A股'}</p>
+          <h2>{item.stock.name}</h2>
+        </div>
+        <span>{item.technical.score}</span>
+      </div>
+      <div className="kline-box">
+        {points ? (
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`${item.stock.name} K线走势`}>
+            <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+          </svg>
+        ) : (
+          <div className="empty-chart">K线暂不可用</div>
+        )}
+      </div>
+      <div className="action-line">{item.suggestion}</div>
+      <ul className="reason-list">
+        <li>{item.technical.summary}</li>
+        <li>支撑 {item.technical.support.toFixed(2)}，压力 {item.technical.resistance.toFixed(2)}</li>
+        <li>MA5 {item.technical.ma5.toFixed(2)} / MA10 {item.technical.ma10.toFixed(2)} / MA20 {item.technical.ma20.toFixed(2)}</li>
+        <li>实时 {item.quote?.verified ? `${money(item.quote.price)}，${pct(item.quote.changePct)}` : item.quote?.warning || '行情未验证'}</li>
+      </ul>
+      <div className="link-row">
+        <a href={item.links.newsSearch} target="_blank" rel="noreferrer">新闻</a>
+        <a href={item.links.announcements} target="_blank" rel="noreferrer">公告</a>
+        <a href={item.links.policySearch} target="_blank" rel="noreferrer">政策</a>
+        <a href={item.links.quotePage} target="_blank" rel="noreferrer">行情页</a>
+      </div>
+      <div className="compliance-tag">K线和新闻入口用于辅助判断，交易建议不保证预测准确。</div>
     </article>
   )
 }
