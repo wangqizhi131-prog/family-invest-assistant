@@ -14,6 +14,8 @@ const distDir = path.join(__dirname, 'dist')
 const appSecret = process.env.APP_SECRET || 'local-dev-secret-change-before-cloud'
 const strictRealtime = String(process.env.STRICT_REALTIME || '').toLowerCase() === 'true'
 const marketProvider = (process.env.MARKET_PROVIDER || 'itick').toLowerCase()
+const quoteCache = new Map()
+const quoteCacheTtlMs = Number(process.env.QUOTE_CACHE_TTL_MS || 45_000)
 
 app.use(cors())
 app.use(express.json({ limit: '12mb' }))
@@ -299,8 +301,20 @@ const pickString = (object, keys, fallback) => {
 const fetchJson = async (url, token) => {
   const headers = token ? { Authorization: `Bearer ${token}`, token } : {}
   const response = await fetch(url, { headers })
-  if (!response.ok) throw new Error(`行情接口返回 ${response.status}`)
+  if (!response.ok) {
+    const error = new Error(`行情接口返回 ${response.status}`)
+    error.status = response.status
+    throw error
+  }
   return response.json()
+}
+
+const withQuoteCache = async (key, producer) => {
+  const cached = quoteCache.get(key)
+  if (cached && Date.now() - cached.savedAt < quoteCacheTtlMs) return cached.value
+  const value = await producer()
+  quoteCache.set(key, { savedAt: Date.now(), value })
+  return value
 }
 
 const buildItickUrl = (pathName, params) => {
@@ -316,12 +330,8 @@ const buildItickUrl = (pathName, params) => {
 const queryItickStock = async ({ market, code }) => {
   if (!process.env.ITICK_TOKEN) return providerMissingQuote(code, code, 'stock')
   const region = market === 'sh' ? 'SH' : market === 'sz' ? 'SZ' : 'BJ'
-  const candidates = [
-    buildItickUrl('/stock/quote', { region, code }),
-    buildItickUrl('/stock/tick', { region, code }),
-  ]
-  let lastError = null
-  for (const url of candidates) {
+  return withQuoteCache(`itick-stock-${region}-${code}`, async () => {
+    const url = buildItickUrl('/stock/quote', { region, code })
     try {
       const payload = extractObject(await fetchJson(url, process.env.ITICK_TOKEN))
       const price = pickNumber(payload, ['price', 'last', 'latestPrice', 'lastPrice', 'close', 'ld', 'p'])
@@ -336,50 +346,65 @@ const queryItickStock = async ({ market, code }) => {
         verified: true,
       }
     } catch (error) {
-      lastError = error
+      return {
+        ...providerMissingQuote(code, code, 'stock'),
+        source: 'itick-error',
+        warning:
+          error?.status === 429
+            ? '授权行情接口当前限流，稍后会自动重试；为避免虚假数据，已暂停交易建议'
+            : `授权行情接口未返回可用A股报价：${error?.message || '未知错误'}`,
+      }
     }
-  }
-  return {
-    ...providerMissingQuote(code, code, 'stock'),
-    source: 'itick-error',
-    warning: `授权行情接口未返回可用A股报价：${lastError?.message || '未知错误'}`,
-  }
+  })
 }
 
 const queryItickFund = async (code) => {
   if (!process.env.ITICK_TOKEN) return providerMissingQuote(code, code, 'fund')
+  if ((process.env.ITICK_FUND_REGION || 'CN') === 'CN' && /^\d{6}$/.test(code)) {
+    return {
+      ...providerMissingQuote(code, code, 'fund'),
+      source: 'itick-not-covered',
+      warning: '当前授权源未覆盖支付宝常见中国场外基金实时估值，基金买卖建议保持暂停',
+    }
+  }
   const candidates = [
     buildItickUrl('/fund/quote', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
     buildItickUrl('/fund/tick', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
     buildItickUrl('/fund/quotes', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
     buildItickUrl('/fund/ticks', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
   ]
-  let lastError = null
-  for (const url of candidates) {
-    try {
-      const payload = extractObject(await fetchJson(url, process.env.ITICK_TOKEN))
-      const nav = pickNumber(payload, ['nav', 'netValue', 'unitNav', 'dwjz', 'ld'])
-      const estimate = pickNumber(payload, ['estimate', 'estimatedNav', 'gsz', 'latestPrice'])
-      if (nav === null && estimate === null) throw new Error('行情接口缺少基金净值或估值字段')
-      return {
-        code,
-        name: pickString(payload, ['name', 'fundName', 'symbolName'], code),
-        nav,
-        estimate,
-        changePct: pickNumber(payload, ['changePct', 'percent', 'gszzl', 'chp']),
-        source: 'itick',
-        updatedAt: nowIso(),
-        verified: true,
+  return withQuoteCache(`itick-fund-${process.env.ITICK_FUND_REGION || 'CN'}-${code}`, async () => {
+    let lastError = null
+    for (const url of candidates) {
+      try {
+        const payload = extractObject(await fetchJson(url, process.env.ITICK_TOKEN))
+        const nav = pickNumber(payload, ['nav', 'netValue', 'unitNav', 'dwjz', 'ld'])
+        const estimate = pickNumber(payload, ['estimate', 'estimatedNav', 'gsz', 'latestPrice'])
+        if (nav === null && estimate === null) throw new Error('行情接口缺少基金净值或估值字段')
+        return {
+          code,
+          name: pickString(payload, ['name', 'fundName', 'symbolName'], code),
+          nav,
+          estimate,
+          changePct: pickNumber(payload, ['changePct', 'percent', 'gszzl', 'chp']),
+          source: 'itick',
+          updatedAt: nowIso(),
+          verified: true,
+        }
+      } catch (error) {
+        lastError = error
+        if (error?.status === 429 || error?.status === 401) break
       }
-    } catch (error) {
-      lastError = error
     }
-  }
-  return {
-    ...providerMissingQuote(code, code, 'fund'),
-    source: 'itick-error',
-    warning: `授权行情接口未返回可用基金报价：${lastError?.message || '未知错误'}`,
-  }
+    return {
+      ...providerMissingQuote(code, code, 'fund'),
+      source: 'itick-error',
+      warning:
+        lastError?.status === 429
+          ? '授权行情接口当前限流，稍后会自动重试；为避免虚假数据，已暂停交易建议'
+          : `授权行情接口未返回可用基金报价：${lastError?.message || '未知错误'}`,
+    }
+  })
 }
 
 const queryEastmoneyStocks = async (stocks) => {
