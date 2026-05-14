@@ -65,6 +65,25 @@ Invoke-RestMethod "https://family-invest-assistant.onrender.com/api/market?funds
 
 如果 Render 工作区暂时没有付款方式，可以先用 `render-free.yaml` 创建临时服务。这个版本能得到公网网址，但没有持久化磁盘，服务休眠或重启后账户和持仓可能丢失，只适合试用。
 
+## 永久稳定版
+
+要做到手机和电脑随时登录、服务重启后账户和持仓还在，必须使用 `render.yaml` 的正式配置：
+
+- `plan: starter`
+- `disk.mountPath: /var/data`
+- `DATA_DIR=/var/data`
+
+Render 免费 Web Service 的文件系统是临时的，不能作为长期数据库。当前服务如果仍显示 `DATA_DIR=/tmp/family-invest-data`，说明还不是永久稳定版。
+
+升级步骤：
+
+1. 在 Render 添加付款方式。
+2. 用 `render.yaml` 重新创建或同步服务。
+3. 确认健康接口返回 `dataDir: "/var/data"`。
+4. 再注册正式账号并录入自选、持仓。
+
+后台保存数据时会先写临时文件，再原子替换 `db.json`，并保留 `db.backup-*.json` 备份文件，降低写入中断导致数据损坏的概率。
+
 ## 本地快速公网访问
 
 `npm run public` 仍然保留，适合临时给手机试用。但这不是最终方案，因为电脑必须开机，隧道地址也可能变化。

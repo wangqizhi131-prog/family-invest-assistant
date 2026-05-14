@@ -1,0 +1,19 @@
+name = "family-invest-assistant"
+main = "worker/index.mjs"
+compatibility_date = "2026-05-14"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "family-invest-assistant"
+database_id = "4c648333-3b28-4d6a-bbd0-7d2274292496"
+
+[vars]
+MARKET_PROVIDER = "itick"
+STRICT_REALTIME = "true"
+ITICK_BASE_URL = "https://api-free.itick.org"
+ITICK_FUND_REGION = "CN"

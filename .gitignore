@@ -24,6 +24,8 @@ web.log
 api.err.log
 api.log
 
+.wrangler
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

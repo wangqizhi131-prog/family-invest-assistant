@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import cors from 'cors'
@@ -47,7 +47,12 @@ const readDb = () => {
 
 function writeDb(db) {
   mkdirSync(dataDir, { recursive: true })
-  writeFileSync(dbFile, `${JSON.stringify(db, null, 2)}\n`, 'utf8')
+  if (existsSync(dbFile)) {
+    copyFileSync(dbFile, path.join(dataDir, `db.backup-${Date.now()}.json`))
+  }
+  const tempFile = path.join(dataDir, `db.${process.pid}.${Date.now()}.tmp`)
+  writeFileSync(tempFile, `${JSON.stringify(db, null, 2)}\n`, 'utf8')
+  renameSync(tempFile, dbFile)
 }
 
 const nowIso = () => new Date().toISOString()
