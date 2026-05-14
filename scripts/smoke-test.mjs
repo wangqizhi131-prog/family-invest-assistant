@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const dataDir = await mkdtemp(path.join(tmpdir(), 'family-invest-'))
+const dataDir = await mkdtemp(path.join(tmpdir(), 'a-stock-assistant-'))
 const port = 8799
 const baseUrl = `http://127.0.0.1:${port}`
 
@@ -35,11 +35,7 @@ server.stderr.on('data', (chunk) => {
 const request = async (url, options = {}) => {
   const response = await fetch(`${baseUrl}${url}`, options)
   const body = await response.text()
-  let data = null
-  if (body) {
-    data = JSON.parse(body)
-  }
-  return { response, data }
+  return { response, data: body ? JSON.parse(body) : null }
 }
 
 const waitForHealth = async () => {
@@ -64,66 +60,95 @@ try {
   const register = await request('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ displayName: '测试用户', relation: '本人', passcode: '1234' }),
+    body: JSON.stringify({ realName: '测试用户', phone: '13800138000' }),
   })
   assert.equal(register.response.status, 200)
   assert.ok(register.data.token)
-  assert.equal(register.data.user.relation, '本人')
+  assert.equal(register.data.user.realName, '测试用户')
+  assert.equal(register.data.user.phoneMasked, '138****8000')
+
+  const login = await request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ realName: '测试用户', phone: '13800138000' }),
+  })
+  assert.equal(login.response.status, 200)
 
   const headers = {
     Authorization: `Bearer ${register.data.token}`,
     'Content-Type': 'application/json',
   }
 
-  const portfolio = await request('/api/portfolio', { headers })
-  assert.equal(portfolio.response.status, 200)
-  assert.ok(portfolio.data.holdings.length >= 7)
-  assert.equal(portfolio.data.snapshot.totalAmount, 1537.88)
+  const emptyPortfolio = await request('/api/portfolio', { headers })
+  assert.equal(emptyPortfolio.response.status, 200)
+  assert.equal(emptyPortfolio.data.holdings.length, 0)
+  assert.equal(emptyPortfolio.data.watchlist.length, 0)
 
-  const market = await request('/api/market?funds=021190&stocks=sh600000')
+  const market = await request('/api/market?stocks=sh600000&funds=021190')
   assert.equal(market.response.status, 200)
-  assert.equal(market.data.funds[0].verified, false)
-  assert.match(market.data.funds[0].warning, /授权|密钥|未配置/)
+  assert.equal(market.data.funds, undefined)
+  assert.ok(Array.isArray(market.data.stocks))
 
-  const create = await request('/api/holdings', {
+  const watch = await request('/api/watchlist', {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      owner: '我',
-      kind: 'stock',
       code: '600000',
       market: 'sh',
       name: '浦发银行',
-      cost: 8.8,
-      units: 100,
-      targetWeight: 5,
-      risk: '均衡',
       theme: '银行',
-      planAmount: 0,
+      note: '观察低估值银行',
     }),
   })
-  assert.equal(create.response.status, 200)
-  assert.equal(create.data.holding.code, '600000')
+  assert.equal(watch.response.status, 200)
+  assert.equal(watch.data.stock.code, '600000')
 
-  const update = await request(`/api/holdings/${create.data.holding.id}`, {
+  const holding = await request('/api/holdings', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      code: '000001',
+      market: 'sz',
+      name: '平安银行',
+      cost: 10.2,
+      shares: 100,
+      targetWeight: 20,
+      risk: '均衡',
+      theme: '银行',
+      planAmount: 500,
+      note: '核心观察仓',
+    }),
+  })
+  assert.equal(holding.response.status, 200)
+  assert.equal(holding.data.holding.shares, 100)
+  assert.equal(holding.data.holding.kind, undefined)
+
+  const update = await request(`/api/holdings/${holding.data.holding.id}`, {
     method: 'PATCH',
     headers,
-    body: JSON.stringify({ targetWeight: 6 }),
+    body: JSON.stringify({ targetWeight: 22, shares: 120 }),
   })
   assert.equal(update.response.status, 200)
-  assert.equal(update.data.holding.targetWeight, 6)
+  assert.equal(update.data.holding.targetWeight, 22)
+  assert.equal(update.data.holding.shares, 120)
 
   const upload = await request('/api/imports', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ fileName: 'alipay.png', imageData: 'data:image/png;base64,AA==' }),
+    body: JSON.stringify({ fileName: 'stock-position.png', imageData: 'data:image/png;base64,AA==', notes: 'A股持仓截图' }),
   })
   assert.equal(upload.response.status, 200)
   assert.equal(upload.data.importRecord.status, '已保存，待人工校对')
 
-  const remove = await request(`/api/holdings/${create.data.holding.id}`, { method: 'DELETE', headers })
-  assert.equal(remove.response.status, 200)
-  assert.equal(remove.data.ok, true)
+  const portfolio = await request('/api/portfolio', { headers })
+  assert.equal(portfolio.response.status, 200)
+  assert.equal(portfolio.data.holdings.length, 1)
+  assert.equal(portfolio.data.watchlist.length, 1)
+
+  const removeHolding = await request(`/api/holdings/${holding.data.holding.id}`, { method: 'DELETE', headers })
+  assert.equal(removeHolding.response.status, 200)
+  const removeWatch = await request(`/api/watchlist/${watch.data.stock.id}`, { method: 'DELETE', headers })
+  assert.equal(removeWatch.response.status, 200)
 } finally {
   if (server.exitCode === null) {
     server.kill()

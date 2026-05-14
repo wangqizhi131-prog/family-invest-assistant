@@ -23,125 +23,13 @@ app.use(express.json({ limit: '12mb' }))
 const defaultDb = () => ({
   users: [],
   holdings: {},
-  snapshots: {},
+  watchlist: {},
   imports: {},
-})
-
-const seedHoldings = () => [
-  {
-    id: 'fund-021190',
-    owner: '我',
-    kind: 'fund',
-    code: '021190',
-    name: '南方亚太精选ETF联接(QDII)C',
-    cost: 1.2878,
-    units: 323.0396,
-    targetWeight: 32,
-    risk: '进取',
-    theme: '亚太科技/QDII',
-    planAmount: 0,
-  },
-  {
-    id: 'fund-008163',
-    owner: '我',
-    kind: 'fund',
-    code: '008163',
-    name: '南方标普红利低波50ETF联接A',
-    cost: 1.0674,
-    units: 27.9468,
-    targetWeight: 5,
-    risk: '保守',
-    theme: '红利低波',
-    planAmount: 0,
-  },
-  {
-    id: 'fund-025856',
-    owner: '我',
-    kind: 'fund',
-    code: '025856',
-    name: '华夏中证电网设备主题ETF联接A',
-    cost: 1.3372,
-    units: 206.5776,
-    targetWeight: 20,
-    risk: '进取',
-    theme: '电网设备',
-    planAmount: 0,
-  },
-  {
-    id: 'fund-270042',
-    owner: '我',
-    kind: 'fund',
-    code: '270042',
-    name: '广发纳斯达克100ETF联接人民币(QDII)A',
-    cost: 7.7788,
-    units: 19.2831,
-    targetWeight: 12,
-    risk: '进取',
-    theme: '纳斯达克100/QDII',
-    planAmount: 10,
-    dailyPlan: 10,
-    planStatus: '每日定投，已投15期，累计150元',
-  },
-  {
-    id: 'fund-006479',
-    owner: '我',
-    kind: 'fund',
-    code: '006479',
-    name: '广发纳斯达克100ETF联接人民币(QDII)C',
-    cost: 7.4064,
-    units: 32.4045,
-    targetWeight: 18,
-    risk: '进取',
-    theme: '纳斯达克100/QDII',
-    planAmount: 10,
-    dailyPlan: 10,
-    planStatus: '每日定投，已投24期，累计240元',
-  },
-  {
-    id: 'fund-015897',
-    owner: '我',
-    kind: 'fund',
-    code: '015897',
-    name: '天弘中证细分化工产业主题ETF联接C',
-    cost: 0.9797,
-    units: 199.137,
-    targetWeight: 13,
-    risk: '进取',
-    theme: '化工',
-    planAmount: 0,
-  },
-  {
-    id: 'fund-040046-plan',
-    owner: '我',
-    kind: 'fund',
-    code: '040046',
-    name: '华安纳斯达克100ETF联接(QDII)A',
-    cost: 8.2791,
-    units: 0,
-    targetWeight: 0,
-    risk: '进取',
-    theme: '纳斯达克100/QDII',
-    planAmount: 10,
-    dailyPlan: 10,
-    planStatus: '每日定投，已投2期，累计20元；当前可能仍在买入待确认',
-  },
-]
-
-const seedSnapshot = () => ({
-  totalAmount: 1537.88,
-  pendingBuy: 60,
-  pendingSell: 97.66,
-  yesterdayProfit: 7.75,
-  holdingProfit: 113.05,
-  ytdProfit: 85.22,
-  ytdReturnPct: 4.03,
 })
 
 const ensureDb = () => {
   mkdirSync(dataDir, { recursive: true })
-  if (!existsSync(dbFile)) {
-    writeDb(defaultDb())
-  }
+  if (!existsSync(dbFile)) writeDb(defaultDb())
 }
 
 const readDb = () => {
@@ -152,7 +40,7 @@ const readDb = () => {
     ...parsed,
     users: parsed.users || [],
     holdings: parsed.holdings || {},
-    snapshots: parsed.snapshots || {},
+    watchlist: parsed.watchlist || {},
     imports: parsed.imports || {},
   }
 }
@@ -165,6 +53,7 @@ function writeDb(db) {
 const nowIso = () => new Date().toISOString()
 const createId = (prefix) => `${prefix}-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`
 const normalizeCode = (value) => String(value || '').trim().replace(/\D/g, '')
+const normalizePhone = (value) => String(value || '').trim().replace(/\D/g, '')
 const normalizeMarket = (value) => {
   const market = String(value || '').toLowerCase()
   return ['sh', 'sz', 'bj'].includes(market) ? market : 'sh'
@@ -173,14 +62,12 @@ const asNumber = (value, fallback = 0) => {
   const number = Number(value)
   return Number.isFinite(number) ? number : fallback
 }
-
-const hashPasscode = (passcode, salt) =>
-  crypto.scryptSync(String(passcode), salt, 32).toString('hex')
+const phoneMasked = (phone) => (phone.length >= 7 ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : phone)
 
 const publicUser = (user) => ({
   id: user.id,
-  displayName: user.displayName,
-  relation: user.relation,
+  realName: user.realName,
+  phoneMasked: phoneMasked(user.phone),
 })
 
 const signPayload = (payload) => {
@@ -198,6 +85,13 @@ const verifyToken = (token) => {
   if (!payload.userId || asNumber(payload.expiresAt) < Date.now()) return null
   return payload
 }
+
+const tokenFor = (user) =>
+  signPayload({
+    userId: user.id,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
+  })
 
 const requireAuth = (req, res, next) => {
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '')
@@ -217,62 +111,52 @@ const requireAuth = (req, res, next) => {
   next()
 }
 
-const tokenFor = (user) =>
-  signPayload({
-    userId: user.id,
-    issuedAt: Date.now(),
-    expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
-  })
-
-const findUserForLogin = (db, displayName, relation) =>
-  db.users.find(
-    (user) =>
-      user.displayName === displayName.trim() &&
-      user.relation === relation.trim(),
-  )
-
-const validateAuthInput = ({ displayName, relation, passcode }) => {
-  if (!String(displayName || '').trim()) return '请输入昵称'
-  if (!String(relation || '').trim()) return '请输入和网站创建者的关系'
-  if (String(passcode || '').length < 4) return '访问口令至少4位'
+const validateIdentityInput = ({ realName, phone }) => {
+  if (!String(realName || '').trim()) return '请输入真实姓名'
+  const normalizedPhone = normalizePhone(phone)
+  if (normalizedPhone.length < 7) return '请输入有效电话号码'
   return ''
 }
 
-const normalizeHolding = (input, existing = {}) => {
-  const kind = input.kind === 'stock' ? 'stock' : 'fund'
+const findUser = (db, realName, phone) =>
+  db.users.find(
+    (user) =>
+      user.realName === String(realName || '').trim() &&
+      user.phone === normalizePhone(phone),
+  )
+
+const normalizeStockInput = (input, existing = {}) => {
   const code = normalizeCode(input.code ?? existing.code)
+  const market = normalizeMarket(input.market ?? existing.market)
   return {
     ...existing,
-    owner: String(input.owner ?? existing.owner ?? '我').trim() || '我',
-    kind,
     code,
-    market: kind === 'stock' ? normalizeMarket(input.market ?? existing.market) : undefined,
+    market,
     name: String(input.name ?? existing.name ?? code).trim() || code,
-    cost: asNumber(input.cost ?? existing.cost),
-    units: asNumber(input.units ?? existing.units),
-    targetWeight: asNumber(input.targetWeight ?? existing.targetWeight),
-    risk: ['保守', '均衡', '进取'].includes(input.risk) ? input.risk : existing.risk || '均衡',
     theme: String(input.theme ?? existing.theme ?? '').trim(),
-    planAmount: asNumber(input.planAmount ?? existing.planAmount),
-    dailyPlan:
-      input.dailyPlan === undefined && existing.dailyPlan === undefined
-        ? undefined
-        : asNumber(input.dailyPlan ?? existing.dailyPlan),
-    planStatus: String(input.planStatus ?? existing.planStatus ?? '').trim(),
+    note: String(input.note ?? existing.note ?? '').trim(),
   }
 }
 
-const providerMissingQuote = (code, name = code, kind = 'fund') => ({
+const normalizeHolding = (input, existing = {}) => ({
+  ...normalizeStockInput(input, existing),
+  cost: asNumber(input.cost ?? existing.cost),
+  shares: asNumber(input.shares ?? existing.shares),
+  targetWeight: asNumber(input.targetWeight ?? existing.targetWeight),
+  risk: ['保守', '均衡', '进取'].includes(input.risk) ? input.risk : existing.risk || '均衡',
+  planAmount: asNumber(input.planAmount ?? existing.planAmount),
+})
+
+const stockValue = (holding, quote) => holding.shares * (quote?.price ?? holding.cost)
+
+const providerMissingQuote = (code, name = code) => ({
   code,
   name,
   source: 'unavailable',
   updatedAt: nowIso(),
   verified: false,
   fallback: true,
-  warning:
-    kind === 'stock'
-      ? '未配置授权实时行情密钥，A股实时数据未验证，已暂停交易建议'
-      : '未配置授权基金行情密钥，基金实时/估值数据未验证，已暂停交易建议',
+  warning: '未配置授权实时行情密钥，A股实时数据未验证，已暂停交易建议',
 })
 
 const extractObject = (payload) => {
@@ -318,7 +202,7 @@ const withQuoteCache = async (key, producer) => {
 }
 
 const buildItickUrl = (pathName, params) => {
-  const base = process.env.ITICK_BASE_URL || 'https://api.itick.io'
+  const base = process.env.ITICK_BASE_URL || 'https://api-free.itick.org'
   const url = new URL(pathName, base)
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== '') url.searchParams.set(key, value)
@@ -328,7 +212,7 @@ const buildItickUrl = (pathName, params) => {
 }
 
 const queryItickStock = async ({ market, code }) => {
-  if (!process.env.ITICK_TOKEN) return providerMissingQuote(code, code, 'stock')
+  if (!process.env.ITICK_TOKEN) return providerMissingQuote(code)
   const region = market === 'sh' ? 'SH' : market === 'sz' ? 'SZ' : 'BJ'
   return withQuoteCache(`itick-stock-${region}-${code}`, async () => {
     const url = buildItickUrl('/stock/quote', { region, code })
@@ -347,7 +231,7 @@ const queryItickStock = async ({ market, code }) => {
       }
     } catch (error) {
       return {
-        ...providerMissingQuote(code, code, 'stock'),
+        ...providerMissingQuote(code),
         source: 'itick-error',
         warning:
           error?.status === 429
@@ -356,113 +240,6 @@ const queryItickStock = async ({ market, code }) => {
       }
     }
   })
-}
-
-const queryItickFund = async (code) => {
-  if (!process.env.ITICK_TOKEN) return providerMissingQuote(code, code, 'fund')
-  if ((process.env.ITICK_FUND_REGION || 'CN') === 'CN' && /^\d{6}$/.test(code)) {
-    return {
-      ...providerMissingQuote(code, code, 'fund'),
-      source: 'itick-not-covered',
-      warning: '当前授权源未覆盖支付宝常见中国场外基金实时估值，基金买卖建议保持暂停',
-    }
-  }
-  const candidates = [
-    buildItickUrl('/fund/quote', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
-    buildItickUrl('/fund/tick', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
-    buildItickUrl('/fund/quotes', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
-    buildItickUrl('/fund/ticks', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
-  ]
-  return withQuoteCache(`itick-fund-${process.env.ITICK_FUND_REGION || 'CN'}-${code}`, async () => {
-    let lastError = null
-    for (const url of candidates) {
-      try {
-        const payload = extractObject(await fetchJson(url, process.env.ITICK_TOKEN))
-        const nav = pickNumber(payload, ['nav', 'netValue', 'unitNav', 'dwjz', 'ld'])
-        const estimate = pickNumber(payload, ['estimate', 'estimatedNav', 'gsz', 'latestPrice'])
-        if (nav === null && estimate === null) throw new Error('行情接口缺少基金净值或估值字段')
-        return {
-          code,
-          name: pickString(payload, ['name', 'fundName', 'symbolName'], code),
-          nav,
-          estimate,
-          changePct: pickNumber(payload, ['changePct', 'percent', 'gszzl', 'chp']),
-          source: 'itick',
-          updatedAt: nowIso(),
-          verified: true,
-        }
-      } catch (error) {
-        lastError = error
-        if (error?.status === 429 || error?.status === 401) break
-      }
-    }
-    return {
-      ...providerMissingQuote(code, code, 'fund'),
-      source: 'itick-error',
-      warning:
-        lastError?.status === 429
-          ? '授权行情接口当前限流，稍后会自动重试；为避免虚假数据，已暂停交易建议'
-          : `授权行情接口未返回可用基金报价：${lastError?.message || '未知错误'}`,
-    }
-  })
-}
-
-const queryEastmoneyStocks = async (stocks) => {
-  if (!stocks.length) return []
-  const secids = stocks
-    .map((stock) => `${stock.market === 'sh' ? '1' : stock.market === 'bj' ? '0' : '0'}.${stock.code}`)
-    .join(',')
-  const url = new URL('https://push2.eastmoney.com/api/qt/ulist.np/get')
-  url.searchParams.set('fltt', '2')
-  url.searchParams.set('invt', '2')
-  url.searchParams.set('fields', 'f12,f14,f2,f3')
-  url.searchParams.set('secids', secids)
-  try {
-    const payload = await fetchJson(url)
-    const rows = payload?.data?.diff || []
-    return stocks.map((stock) => {
-      const row = rows.find((item) => String(item.f12) === stock.code)
-      if (!row) return providerMissingQuote(stock.code, stock.code, 'stock')
-      return {
-        code: stock.code,
-        name: row.f14 || stock.code,
-        price: asNumber(row.f2, null),
-        changePct: asNumber(row.f3, null),
-        source: 'eastmoney-public',
-        updatedAt: nowIso(),
-        verified: !strictRealtime,
-        fallback: strictRealtime,
-        warning: strictRealtime ? '当前为公开接口结果，未作为授权实时行情使用，已暂停交易建议' : undefined,
-      }
-    })
-  } catch {
-    return stocks.map((stock) => providerMissingQuote(stock.code, stock.code, 'stock'))
-  }
-}
-
-const queryEastmoneyFund = async (code) => {
-  try {
-    const response = await fetch(`https://fundgz.1234567.com.cn/js/${code}.js?rt=${Date.now()}`)
-    if (!response.ok) throw new Error(`基金估值接口返回 ${response.status}`)
-    const text = await response.text()
-    const match = text.match(/jsonpgz\((.*)\);?/)
-    if (!match) throw new Error('基金估值接口格式不可用')
-    const payload = JSON.parse(match[1])
-    return {
-      code,
-      name: payload.name || code,
-      nav: asNumber(payload.dwjz, null),
-      estimate: asNumber(payload.gsz, null),
-      changePct: asNumber(payload.gszzl, null),
-      source: 'eastmoney-public',
-      updatedAt: nowIso(),
-      verified: !strictRealtime,
-      fallback: strictRealtime,
-      warning: strictRealtime ? '当前为公开估值接口结果，未作为授权实时行情使用，已暂停交易建议' : undefined,
-    }
-  } catch {
-    return providerMissingQuote(code, code, 'fund')
-  }
 }
 
 const parseStocks = (value) =>
@@ -477,12 +254,6 @@ const parseStocks = (value) =>
     })
     .filter(Boolean)
 
-const parseFunds = (value) =>
-  String(value || '')
-    .split(',')
-    .map(normalizeCode)
-    .filter((code) => code.length === 6)
-
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -491,49 +262,41 @@ app.get('/api/health', (_req, res) => {
     marketProvider,
     strictRealtime,
     hasAuthorizedMarketToken: Boolean(process.env.ITICK_TOKEN),
+    assetScope: 'a-stocks-only',
   })
 })
 
 app.post('/api/auth/register', (req, res) => {
-  const error = validateAuthInput(req.body || {})
+  const error = validateIdentityInput(req.body || {})
   if (error) {
     res.status(400).json({ error })
     return
   }
   const db = readDb()
-  const displayName = String(req.body.displayName).trim()
-  const relation = String(req.body.relation).trim()
-  if (findUserForLogin(db, displayName, relation)) {
-    res.status(409).json({ error: '这个昵称和关系已经注册，请直接登录' })
-    return
+  const realName = String(req.body.realName).trim()
+  const phone = normalizePhone(req.body.phone)
+  let user = findUser(db, realName, phone)
+  if (!user) {
+    user = { id: createId('user'), realName, phone, createdAt: nowIso() }
+    db.users.push(user)
+    db.holdings[user.id] = []
+    db.watchlist[user.id] = []
+    db.imports[user.id] = []
+    writeDb(db)
   }
-  const salt = crypto.randomBytes(16).toString('hex')
-  const user = {
-    id: createId('user'),
-    displayName,
-    relation,
-    salt,
-    passHash: hashPasscode(req.body.passcode, salt),
-    createdAt: nowIso(),
-  }
-  db.users.push(user)
-  db.holdings[user.id] = db.users.length === 1 ? seedHoldings() : []
-  db.snapshots[user.id] = db.users.length === 1 ? seedSnapshot() : {}
-  db.imports[user.id] = []
-  writeDb(db)
   res.json({ token: tokenFor(user), user: publicUser(user) })
 })
 
 app.post('/api/auth/login', (req, res) => {
-  const error = validateAuthInput(req.body || {})
+  const error = validateIdentityInput(req.body || {})
   if (error) {
     res.status(400).json({ error })
     return
   }
   const db = readDb()
-  const user = findUserForLogin(db, String(req.body.displayName), String(req.body.relation))
-  if (!user || user.passHash !== hashPasscode(req.body.passcode, user.salt)) {
-    res.status(401).json({ error: '昵称、关系或口令不正确' })
+  const user = findUser(db, req.body.realName, req.body.phone)
+  if (!user) {
+    res.status(401).json({ error: '真实姓名或电话号码不正确' })
     return
   }
   res.json({ token: tokenFor(user), user: publicUser(user) })
@@ -547,7 +310,7 @@ app.get('/api/portfolio', requireAuth, (req, res) => {
   res.json({
     user: publicUser(req.user),
     holdings: req.db.holdings[req.user.id] || [],
-    snapshot: req.db.snapshots[req.user.id] || {},
+    watchlist: req.db.watchlist[req.user.id] || [],
     imports: req.db.imports[req.user.id] || [],
   })
 })
@@ -555,10 +318,11 @@ app.get('/api/portfolio', requireAuth, (req, res) => {
 app.post('/api/holdings', requireAuth, (req, res) => {
   const holding = normalizeHolding(req.body || {})
   if (!holding.code || !holding.name) {
-    res.status(400).json({ error: '请填写代码和名称' })
+    res.status(400).json({ error: '请填写股票代码和名称' })
     return
   }
-  holding.id = createId(holding.kind)
+  holding.id = createId('holding')
+  holding.createdAt = nowIso()
   req.db.holdings[req.user.id] = [...(req.db.holdings[req.user.id] || []), holding]
   writeDb(req.db)
   res.json({ holding })
@@ -571,7 +335,7 @@ app.patch('/api/holdings/:id', requireAuth, (req, res) => {
     res.status(404).json({ error: '持仓不存在' })
     return
   }
-  const holding = { ...normalizeHolding(req.body || {}, holdings[index]), id: holdings[index].id }
+  const holding = { ...normalizeHolding(req.body || {}, holdings[index]), id: holdings[index].id, createdAt: holdings[index].createdAt }
   holdings[index] = holding
   req.db.holdings[req.user.id] = holdings
   writeDb(req.db)
@@ -584,9 +348,42 @@ app.delete('/api/holdings/:id', requireAuth, (req, res) => {
   res.json({ ok: true })
 })
 
+app.post('/api/watchlist', requireAuth, (req, res) => {
+  const stock = normalizeStockInput(req.body || {})
+  if (!stock.code || !stock.name) {
+    res.status(400).json({ error: '请填写股票代码和名称' })
+    return
+  }
+  stock.id = createId('watch')
+  stock.createdAt = nowIso()
+  req.db.watchlist[req.user.id] = [...(req.db.watchlist[req.user.id] || []), stock]
+  writeDb(req.db)
+  res.json({ stock })
+})
+
+app.patch('/api/watchlist/:id', requireAuth, (req, res) => {
+  const watchlist = req.db.watchlist[req.user.id] || []
+  const index = watchlist.findIndex((item) => item.id === req.params.id)
+  if (index === -1) {
+    res.status(404).json({ error: '自选股不存在' })
+    return
+  }
+  const stock = { ...normalizeStockInput(req.body || {}, watchlist[index]), id: watchlist[index].id, createdAt: watchlist[index].createdAt }
+  watchlist[index] = stock
+  req.db.watchlist[req.user.id] = watchlist
+  writeDb(req.db)
+  res.json({ stock })
+})
+
+app.delete('/api/watchlist/:id', requireAuth, (req, res) => {
+  req.db.watchlist[req.user.id] = (req.db.watchlist[req.user.id] || []).filter((item) => item.id !== req.params.id)
+  writeDb(req.db)
+  res.json({ ok: true })
+})
+
 app.post('/api/imports', requireAuth, (req, res) => {
   if (!String(req.body?.fileName || '').trim() || !String(req.body?.imageData || '').startsWith('data:image/')) {
-    res.status(400).json({ error: '请上传支付宝截图图片' })
+    res.status(400).json({ error: '请上传A股持仓或自选截图' })
     return
   }
   const importRecord = {
@@ -603,26 +400,68 @@ app.post('/api/imports', requireAuth, (req, res) => {
 
 app.get('/api/market', async (req, res) => {
   const stocks = parseStocks(req.query.stocks)
-  const funds = parseFunds(req.query.funds)
-
   let stockQuotes = []
-  let fundQuotes = []
   if (marketProvider === 'itick') {
     stockQuotes = await Promise.all(stocks.map((stock) => queryItickStock(stock)))
-    fundQuotes = await Promise.all(funds.map((code) => queryItickFund(code)))
-  } else if (marketProvider === 'eastmoney-public' && !strictRealtime) {
-    stockQuotes = await queryEastmoneyStocks(stocks)
-    fundQuotes = await Promise.all(funds.map((code) => queryEastmoneyFund(code)))
   } else {
-    stockQuotes = stocks.map((stock) => providerMissingQuote(stock.code, stock.code, 'stock'))
-    fundQuotes = funds.map((code) => providerMissingQuote(code, code, 'fund'))
+    stockQuotes = stocks.map((stock) => providerMissingQuote(stock.code))
   }
+  res.json({ stocks: stockQuotes, updatedAt: nowIso() })
+})
 
-  res.json({
-    stocks: stockQuotes,
-    funds: fundQuotes,
-    updatedAt: nowIso(),
+app.get('/api/advice', requireAuth, async (req, res) => {
+  const holdings = req.db.holdings[req.user.id] || []
+  const stocks = holdings.map((holding) => `${holding.market}${holding.code}`)
+  const quotes = await Promise.all(parseStocks(stocks.join(',')).map((stock) => queryItickStock(stock)))
+  const total = holdings.reduce((sum, holding) => {
+    const quote = quotes.find((item) => item.code === holding.code)
+    return sum + stockValue(holding, quote)
+  }, 0)
+  const advice = holdings.map((holding) => {
+    const quote = quotes.find((item) => item.code === holding.code)
+    const value = stockValue(holding, quote)
+    const gain = holding.cost > 0 ? (((quote?.price ?? holding.cost) - holding.cost) / holding.cost) * 100 : 0
+    const weight = total > 0 ? (value / total) * 100 : 0
+    if (!quote?.verified) {
+      return {
+        id: holding.id,
+        stock: holding,
+        tone: 'watch',
+        action: '实时行情未验证，暂不执行交易',
+        confidence: 30,
+        reasons: [quote?.warning || '行情源暂不可用'],
+      }
+    }
+    if ((quote.changePct ?? 0) <= -1.5 && weight + 2 < holding.targetWeight && holding.planAmount > 0) {
+      return {
+        id: holding.id,
+        stock: holding,
+        tone: 'buy',
+        action: `可考虑分批加仓 ${holding.planAmount.toFixed(0)} 元`,
+        confidence: 70,
+        reasons: [`今日涨跌 ${Number(quote.changePct).toFixed(2)}%`, `当前仓位约 ${weight.toFixed(1)}%，低于目标 ${holding.targetWeight}%`],
+      }
+    }
+    if (gain >= 18 || weight > holding.targetWeight + 4) {
+      return {
+        id: holding.id,
+        stock: holding,
+        tone: 'sell',
+        action: `可考虑减仓约 ${(value * 0.15).toFixed(0)} 元`,
+        confidence: 66,
+        reasons: [`相对成本 ${gain.toFixed(2)}%`, `当前仓位约 ${weight.toFixed(1)}%，目标 ${holding.targetWeight}%`],
+      }
+    }
+    return {
+      id: holding.id,
+      stock: holding,
+      tone: 'hold',
+      action: '暂不交易，继续观察',
+      confidence: 55,
+      reasons: [`今日涨跌 ${Number(quote.changePct ?? 0).toFixed(2)}%`, `相对成本 ${gain.toFixed(2)}%`],
+    }
   })
+  res.json({ advice, updatedAt: nowIso() })
 })
 
 if (existsSync(distDir)) {
@@ -633,5 +472,5 @@ if (existsSync(distDir)) {
 }
 
 app.listen(port, () => {
-  console.log(`Family investment assistant is running at http://localhost:${port}`)
+  console.log(`A-share investment assistant is running at http://localhost:${port}`)
 })
