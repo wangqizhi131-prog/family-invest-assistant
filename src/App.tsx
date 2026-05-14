@@ -258,6 +258,7 @@ function App() {
   const [editingWatchId, setEditingWatchId] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [lookupLoading, setLookupLoading] = useState(false)
 
   const marketKeys = useMemo(() => {
     const map = new Map<string, StockBase>()
@@ -331,6 +332,40 @@ function App() {
     setEditingHoldingId('')
     setMessage('已保存持仓')
     await loadPortfolio()
+  }
+
+  const lookupStock = async (code: string, target: 'holding' | 'watch') => {
+    const normalized = code.replace(/\D/g, '')
+    if (normalized.length !== 6) return
+    setLookupLoading(true)
+    try {
+      const response = await fetch(`/api/stocks/lookup?${new URLSearchParams({ code: normalized }).toString()}`)
+      const data = await response.json()
+      if (!response.ok) {
+        setMessage(data.error || '股票搜索失败')
+        return
+      }
+      if (target === 'holding') {
+        setHoldingForm((current) => ({
+          ...current,
+          code: data.stock.code,
+          market: data.stock.market,
+          name: data.stock.name,
+          theme: data.stock.theme,
+        }))
+      } else {
+        setWatchForm((current) => ({
+          ...current,
+          code: data.stock.code,
+          market: data.stock.market,
+          name: data.stock.name,
+          theme: data.stock.theme,
+        }))
+      }
+      setMessage(data.stock.quote?.verified ? '已自动填充股票信息' : data.stock.quote?.warning || '已按代码自动判断市场')
+    } finally {
+      setLookupLoading(false)
+    }
   }
 
   const saveWatch = async () => {
@@ -457,7 +492,7 @@ function App() {
         <section className="content-stack">
           <article className="settings-panel form-panel">
             <div className="setting-title"><Star size={18} /><h2>{editingWatchId ? '修改自选' : '添加自选'}</h2></div>
-            <StockFields value={watchForm} onChange={setWatchForm} />
+            <StockFields value={watchForm} onChange={setWatchForm} onLookup={(code) => lookupStock(code, 'watch')} loading={lookupLoading} />
             {message && <div className="inline-message">{message}</div>}
             <button onClick={saveWatch}><Plus size={16} />保存自选</button>
           </article>
@@ -470,7 +505,7 @@ function App() {
           <article className="settings-panel form-panel">
             <div className="setting-title"><Edit3 size={18} /><h2>{editingHoldingId ? '修改持仓' : '新增持仓'}</h2></div>
             <div className="form-grid">
-              <StockFields value={holdingForm} onChange={setHoldingForm} />
+              <StockFields value={holdingForm} onChange={setHoldingForm} onLookup={(code) => lookupStock(code, 'holding')} loading={lookupLoading} />
               <label>持股数量<input type="number" value={holdingForm.shares} onChange={(event) => setHoldingForm({ ...holdingForm, shares: Number(event.target.value) })} /></label>
               <label>成本价<input type="number" value={holdingForm.cost} onChange={(event) => setHoldingForm({ ...holdingForm, cost: Number(event.target.value) })} /></label>
               <label>目标仓位%<input type="number" value={holdingForm.targetWeight} onChange={(event) => setHoldingForm({ ...holdingForm, targetWeight: Number(event.target.value) })} /></label>
@@ -535,13 +570,24 @@ function App() {
   )
 }
 
-function StockFields<T extends StockBase>({ value, onChange }: { value: T; onChange: (next: T) => void }) {
+function StockFields<T extends StockBase>({ value, onChange, onLookup, loading }: { value: T; onChange: (next: T) => void; onLookup: (code: string) => void; loading: boolean }) {
   return (
     <>
-      <label>市场<select value={value.market} onChange={(event) => onChange({ ...value, market: event.target.value as MarketCode })}><option value="sh">沪市</option><option value="sz">深市</option><option value="bj">北交所</option></select></label>
-      <label>代码<input value={value.code} inputMode="numeric" onChange={(event) => onChange({ ...value, code: event.target.value.trim() })} placeholder="600000" /></label>
-      <label>名称<input value={value.name} onChange={(event) => onChange({ ...value, name: event.target.value })} placeholder="浦发银行" /></label>
-      <label>主题<input value={value.theme} onChange={(event) => onChange({ ...value, theme: event.target.value })} placeholder="银行 / 电力 / 化工" /></label>
+      <label className="wide">股票代码
+        <div className="lookup-row">
+          <input value={value.code} inputMode="numeric" maxLength={6} onChange={(event) => {
+            const code = event.target.value.replace(/\D/g, '')
+            onChange({ ...value, code })
+            if (code.length === 6) onLookup(code)
+          }} placeholder="输入6位代码自动搜索" />
+          <button type="button" className="mini-button" onClick={() => onLookup(value.code)} disabled={loading || value.code.length !== 6}>
+            <RefreshCw size={15} className={loading ? 'spin' : ''} />
+          </button>
+        </div>
+      </label>
+      <label>市场<input value={value.market.toUpperCase()} readOnly /></label>
+      <label>名称<input value={value.name} onChange={(event) => onChange({ ...value, name: event.target.value })} placeholder="自动填充" /></label>
+      <label>主题<input value={value.theme} onChange={(event) => onChange({ ...value, theme: event.target.value })} placeholder="自动填充" /></label>
     </>
   )
 }

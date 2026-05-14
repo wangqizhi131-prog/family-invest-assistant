@@ -89,27 +89,31 @@ try {
   assert.equal(market.data.funds, undefined)
   assert.ok(Array.isArray(market.data.stocks))
 
+  const lookup = await request('/api/stocks/lookup?code=600000')
+  assert.equal(lookup.response.status, 200)
+  assert.equal(lookup.data.stock.code, '600000')
+  assert.equal(lookup.data.stock.market, 'sh')
+  assert.ok(lookup.data.stock.name)
+
   const watch = await request('/api/watchlist', {
     method: 'POST',
     headers,
     body: JSON.stringify({
       code: '600000',
-      market: 'sh',
-      name: '浦发银行',
-      theme: '银行',
+      name: '',
       note: '观察低估值银行',
     }),
   })
   assert.equal(watch.response.status, 200)
   assert.equal(watch.data.stock.code, '600000')
+  assert.equal(watch.data.stock.market, 'sh')
+  assert.ok(watch.data.stock.name)
 
   const holding = await request('/api/holdings', {
     method: 'POST',
     headers,
     body: JSON.stringify({
       code: '000001',
-      market: 'sz',
-      name: '平安银行',
       cost: 10.2,
       shares: 100,
       targetWeight: 20,

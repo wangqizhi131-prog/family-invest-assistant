@@ -58,6 +58,12 @@ const normalizeMarket = (value) => {
   const market = String(value || '').toLowerCase()
   return ['sh', 'sz', 'bj'].includes(market) ? market : 'sh'
 }
+const inferMarket = (code) => {
+  if (/^(60|68|90)/.test(code)) return 'sh'
+  if (/^(00|30|20)/.test(code)) return 'sz'
+  if (/^(43|83|87|88|92)/.test(code)) return 'bj'
+  return 'sh'
+}
 const asNumber = (value, fallback = 0) => {
   const number = Number(value)
   return Number.isFinite(number) ? number : fallback
@@ -127,7 +133,7 @@ const findUser = (db, realName, phone) =>
 
 const normalizeStockInput = (input, existing = {}) => {
   const code = normalizeCode(input.code ?? existing.code)
-  const market = normalizeMarket(input.market ?? existing.market)
+  const market = input.market || existing.market ? normalizeMarket(input.market ?? existing.market) : inferMarket(code)
   return {
     ...existing,
     code,
@@ -136,6 +142,28 @@ const normalizeStockInput = (input, existing = {}) => {
     theme: String(input.theme ?? existing.theme ?? '').trim(),
     note: String(input.note ?? existing.note ?? '').trim(),
   }
+}
+
+const enrichStock = async (stock) => {
+  if (!stock.code) return stock
+  const quote = await queryItickStock({ market: stock.market, code: stock.code })
+  return {
+    ...stock,
+    name: stock.name && stock.name !== stock.code ? stock.name : quote.name || stock.code,
+    theme: stock.theme || autoTheme(stock.code, quote.name),
+    quote,
+  }
+}
+
+const autoTheme = (code, name = '') => {
+  if (/银行/.test(name)) return '银行'
+  if (/证券|券商/.test(name)) return '证券'
+  if (/电力|能源/.test(name)) return '能源'
+  if (/科技|软件|信息/.test(name)) return '科技'
+  if (/^(60|68)/.test(code)) return '沪市A股'
+  if (/^(00|30)/.test(code)) return '深市A股'
+  if (/^(43|83|87|88|92)/.test(code)) return '北交所'
+  return 'A股'
 }
 
 const normalizeHolding = (input, existing = {}) => ({
@@ -315,8 +343,19 @@ app.get('/api/portfolio', requireAuth, (req, res) => {
   })
 })
 
-app.post('/api/holdings', requireAuth, (req, res) => {
-  const holding = normalizeHolding(req.body || {})
+app.get('/api/stocks/lookup', async (req, res) => {
+  const code = normalizeCode(req.query.code)
+  if (code.length !== 6) {
+    res.status(400).json({ error: '请输入6位股票代码' })
+    return
+  }
+  const base = { code, market: inferMarket(code), name: code, theme: '' }
+  const stock = await enrichStock(base)
+  res.json({ stock })
+})
+
+app.post('/api/holdings', requireAuth, async (req, res) => {
+  const holding = await enrichStock(normalizeHolding(req.body || {}))
   if (!holding.code || !holding.name) {
     res.status(400).json({ error: '请填写股票代码和名称' })
     return
@@ -328,14 +367,14 @@ app.post('/api/holdings', requireAuth, (req, res) => {
   res.json({ holding })
 })
 
-app.patch('/api/holdings/:id', requireAuth, (req, res) => {
+app.patch('/api/holdings/:id', requireAuth, async (req, res) => {
   const holdings = req.db.holdings[req.user.id] || []
   const index = holdings.findIndex((item) => item.id === req.params.id)
   if (index === -1) {
     res.status(404).json({ error: '持仓不存在' })
     return
   }
-  const holding = { ...normalizeHolding(req.body || {}, holdings[index]), id: holdings[index].id, createdAt: holdings[index].createdAt }
+  const holding = { ...(await enrichStock(normalizeHolding(req.body || {}, holdings[index]))), id: holdings[index].id, createdAt: holdings[index].createdAt }
   holdings[index] = holding
   req.db.holdings[req.user.id] = holdings
   writeDb(req.db)
@@ -348,8 +387,8 @@ app.delete('/api/holdings/:id', requireAuth, (req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/watchlist', requireAuth, (req, res) => {
-  const stock = normalizeStockInput(req.body || {})
+app.post('/api/watchlist', requireAuth, async (req, res) => {
+  const stock = await enrichStock(normalizeStockInput(req.body || {}))
   if (!stock.code || !stock.name) {
     res.status(400).json({ error: '请填写股票代码和名称' })
     return
@@ -361,14 +400,14 @@ app.post('/api/watchlist', requireAuth, (req, res) => {
   res.json({ stock })
 })
 
-app.patch('/api/watchlist/:id', requireAuth, (req, res) => {
+app.patch('/api/watchlist/:id', requireAuth, async (req, res) => {
   const watchlist = req.db.watchlist[req.user.id] || []
   const index = watchlist.findIndex((item) => item.id === req.params.id)
   if (index === -1) {
     res.status(404).json({ error: '自选股不存在' })
     return
   }
-  const stock = { ...normalizeStockInput(req.body || {}, watchlist[index]), id: watchlist[index].id, createdAt: watchlist[index].createdAt }
+  const stock = { ...(await enrichStock(normalizeStockInput(req.body || {}, watchlist[index]))), id: watchlist[index].id, createdAt: watchlist[index].createdAt }
   watchlist[index] = stock
   req.db.watchlist[req.user.id] = watchlist
   writeDb(req.db)
