@@ -304,7 +304,7 @@ const fetchJson = async (url, token) => {
 }
 
 const buildItickUrl = (pathName, params) => {
-  const base = process.env.ITICK_BASE_URL || 'https://api.itick.org'
+  const base = process.env.ITICK_BASE_URL || 'https://api.itick.io'
   const url = new URL(pathName, base)
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== '') url.searchParams.set(key, value)
@@ -350,7 +350,9 @@ const queryItickFund = async (code) => {
   if (!process.env.ITICK_TOKEN) return providerMissingQuote(code, code, 'fund')
   const candidates = [
     buildItickUrl('/fund/quote', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
+    buildItickUrl('/fund/tick', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
     buildItickUrl('/fund/quotes', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
+    buildItickUrl('/fund/ticks', { region: process.env.ITICK_FUND_REGION || 'CN', code }),
   ]
   let lastError = null
   for (const url of candidates) {

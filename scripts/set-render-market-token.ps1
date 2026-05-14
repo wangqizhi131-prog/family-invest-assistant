@@ -26,7 +26,7 @@ $headers = @{
 $values = [ordered]@{
   MARKET_PROVIDER = "itick"
   STRICT_REALTIME = "true"
-  ITICK_BASE_URL = "https://api.itick.org"
+  ITICK_BASE_URL = "https://api.itick.io"
   ITICK_FUND_REGION = "CN"
   ITICK_TOKEN = $Token
 }
