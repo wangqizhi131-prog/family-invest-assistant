@@ -82,6 +82,12 @@ const validateIdentityInput = ({ realName, phone }) => {
   return ''
 }
 
+const validateStockInput = (stock) => {
+  if (stock.code.length !== 6) return '请输入6位股票代码'
+  if (!stock.name) return '请填写股票名称'
+  return ''
+}
+
 const stockFromRow = (row) => ({
   id: row.id,
   code: row.code,
@@ -149,7 +155,19 @@ const pickNumber = (object, keys) => {
 
 async function fetchJson(url, token) {
   const headers = token ? { Authorization: `Bearer ${token}`, token } : {}
-  const response = await fetch(url, { headers })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort('market-timeout'), 8000)
+  let response
+  try {
+    response = await fetch(url, { headers, signal: controller.signal })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('行情接口响应超时')
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
   if (!response.ok) {
     const error = new Error(`行情接口返回 ${response.status}`)
     error.status = response.status
@@ -422,6 +440,8 @@ async function handleApi(request, env) {
 
   if (path === '/api/holdings' && method === 'POST') {
     const input = await enrichStock(env, normalizeHolding(await readBody(request)))
+    const error = validateStockInput(input)
+    if (error) return json({ error }, 400)
     const id = createId('holding')
     await env.DB.prepare('INSERT INTO holdings (id,user_id,code,market,name,theme,note,cost,shares,target_weight,risk,plan_amount,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id, user.id, input.code, input.market, input.name, input.theme, input.note, input.cost, input.shares, input.targetWeight, input.risk, input.planAmount, nowIso()).run()
     return json({ holding: { ...input, id } })
@@ -436,12 +456,16 @@ async function handleApi(request, env) {
     const existing = await env.DB.prepare('SELECT * FROM holdings WHERE id = ? AND user_id = ?').bind(holdingMatch[1], user.id).first()
     if (!existing) return json({ error: '持仓不存在' }, 404)
     const input = await enrichStock(env, normalizeHolding(await readBody(request), existing))
+    const error = validateStockInput(input)
+    if (error) return json({ error }, 400)
     await env.DB.prepare('UPDATE holdings SET code=?,market=?,name=?,theme=?,note=?,cost=?,shares=?,target_weight=?,risk=?,plan_amount=? WHERE id=? AND user_id=?').bind(input.code, input.market, input.name, input.theme, input.note, input.cost, input.shares, input.targetWeight, input.risk, input.planAmount, holdingMatch[1], user.id).run()
     return json({ holding: { ...input, id: holdingMatch[1] } })
   }
 
   if (path === '/api/watchlist' && method === 'POST') {
     const input = await enrichStock(env, normalizeStockInput(await readBody(request)))
+    const error = validateStockInput(input)
+    if (error) return json({ error }, 400)
     const id = createId('watch')
     await env.DB.prepare('INSERT INTO watchlist (id,user_id,code,market,name,theme,note,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(id, user.id, input.code, input.market, input.name, input.theme, input.note, nowIso()).run()
     return json({ stock: { ...input, id } })
@@ -456,6 +480,8 @@ async function handleApi(request, env) {
     const existing = await env.DB.prepare('SELECT * FROM watchlist WHERE id = ? AND user_id = ?').bind(watchMatch[1], user.id).first()
     if (!existing) return json({ error: '自选股不存在' }, 404)
     const input = await enrichStock(env, normalizeStockInput(await readBody(request), existing))
+    const error = validateStockInput(input)
+    if (error) return json({ error }, 400)
     await env.DB.prepare('UPDATE watchlist SET code=?,market=?,name=?,theme=?,note=? WHERE id=? AND user_id=?').bind(input.code, input.market, input.name, input.theme, input.note, watchMatch[1], user.id).run()
     return json({ stock: { ...input, id: watchMatch[1] } })
   }

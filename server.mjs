@@ -129,6 +129,12 @@ const validateIdentityInput = ({ realName, phone }) => {
   return ''
 }
 
+const validateStockInput = (stock) => {
+  if (stock.code.length !== 6) return '请输入6位股票代码'
+  if (!stock.name) return '请填写股票名称'
+  return ''
+}
+
 const findUser = (db, realName, phone) =>
   db.users.find(
     (user) =>
@@ -234,7 +240,19 @@ const pickString = (object, keys, fallback) => {
 
 const fetchJson = async (url, token) => {
   const headers = token ? { Authorization: `Bearer ${token}`, token } : {}
-  const response = await fetch(url, { headers })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort('market-timeout'), 8000)
+  let response
+  try {
+    response = await fetch(url, { headers, signal: controller.signal })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('行情接口响应超时')
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
   if (!response.ok) {
     const error = new Error(`行情接口返回 ${response.status}`)
     error.status = response.status
@@ -500,8 +518,9 @@ app.get('/api/stocks/lookup', async (req, res) => {
 
 app.post('/api/holdings', requireAuth, async (req, res) => {
   const holding = await enrichStock(normalizeHolding(req.body || {}))
-  if (!holding.code || !holding.name) {
-    res.status(400).json({ error: '请填写股票代码和名称' })
+  const error = validateStockInput(holding)
+  if (error) {
+    res.status(400).json({ error })
     return
   }
   holding.id = createId('holding')
@@ -519,6 +538,11 @@ app.patch('/api/holdings/:id', requireAuth, async (req, res) => {
     return
   }
   const holding = { ...(await enrichStock(normalizeHolding(req.body || {}, holdings[index]))), id: holdings[index].id, createdAt: holdings[index].createdAt }
+  const error = validateStockInput(holding)
+  if (error) {
+    res.status(400).json({ error })
+    return
+  }
   holdings[index] = holding
   req.db.holdings[req.user.id] = holdings
   writeDb(req.db)
@@ -533,8 +557,9 @@ app.delete('/api/holdings/:id', requireAuth, (req, res) => {
 
 app.post('/api/watchlist', requireAuth, async (req, res) => {
   const stock = await enrichStock(normalizeStockInput(req.body || {}))
-  if (!stock.code || !stock.name) {
-    res.status(400).json({ error: '请填写股票代码和名称' })
+  const error = validateStockInput(stock)
+  if (error) {
+    res.status(400).json({ error })
     return
   }
   stock.id = createId('watch')
@@ -552,6 +577,11 @@ app.patch('/api/watchlist/:id', requireAuth, async (req, res) => {
     return
   }
   const stock = { ...(await enrichStock(normalizeStockInput(req.body || {}, watchlist[index]))), id: watchlist[index].id, createdAt: watchlist[index].createdAt }
+  const error = validateStockInput(stock)
+  if (error) {
+    res.status(400).json({ error })
+    return
+  }
   watchlist[index] = stock
   req.db.watchlist[req.user.id] = watchlist
   writeDb(req.db)

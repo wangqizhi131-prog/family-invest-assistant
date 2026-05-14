@@ -513,7 +513,7 @@ function App() {
           </article>
           <article className="settings-panel">
             <div className="setting-title"><WalletCards size={18} /><h2>账户和数据</h2></div>
-            <p>不再使用基金模块。自选股、持仓和截图导入记录按账号独立保存。</p>
+            <p>自选股、持仓和截图导入记录按账号独立保存在后台。</p>
             <button className="secondary" onClick={logout}><LogOut size={16} />退出登录</button>
           </article>
         </section>

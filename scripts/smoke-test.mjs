@@ -84,9 +84,8 @@ try {
   assert.equal(emptyPortfolio.data.holdings.length, 0)
   assert.equal(emptyPortfolio.data.watchlist.length, 0)
 
-  const market = await request('/api/market?stocks=sh600000&funds=021190')
+  const market = await request('/api/market?stocks=sh600000')
   assert.equal(market.response.status, 200)
-  assert.equal(market.data.funds, undefined)
   assert.ok(Array.isArray(market.data.stocks))
 
   const kline = await request('/api/market/kline?stock=sh600000&limit=20')

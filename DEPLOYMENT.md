@@ -1,89 +1,104 @@
-# 云部署说明
+# 部署说明
 
-目标：把家庭投资助手放到云服务器上。这样手机只需要打开一个 HTTPS 网址，不需要和电脑在同一网络，也不需要你的电脑开机。
+当前推荐方案是 Cloudflare Workers + Assets + D1。这个方案有免费额度，手机和电脑随时访问同一个 HTTPS 地址，数据保存在 D1，不依赖你的电脑开机。
 
-## 推荐方案
-
-优先用 Render、Railway、Fly.io 这类能跑 Node 服务的平台。项目已经包含：
-
-- `server.mjs`：同时提供网页和 API。
-- `render.yaml`：Render 一键部署蓝图。
-- `Dockerfile`：Docker 平台通用部署。
-- `.env.example`：云端环境变量模板。
-
-## 必填环境变量
+生产站点：
 
 ```text
-APP_SECRET=一串很长的随机密钥
-DATA_DIR=/var/data
-MARKET_PROVIDER=itick
-STRICT_REALTIME=true
-ITICK_TOKEN=你的授权行情接口Token
-ITICK_BASE_URL=https://api-free.itick.org
-ITICK_FUND_REGION=CN
-PORT=8787
+https://family-invest-assistant.wangqizhi131.workers.dev
 ```
 
-`APP_SECRET` 用来签登录状态，不能公开。`DATA_DIR` 必须指向云平台的持久化磁盘，否则平台重启后账户和持仓可能丢失。
+## 当前线上状态
 
-## 实时行情原则
+- Cloudflare 账号：`wangqizhi131@gmail.com`
+- Worker：`family-invest-assistant`
+- D1 数据库：`family-invest-assistant`
+- 数据区域：APAC
+- 线上存储：Cloudflare D1
+- 行情源：iTick 授权 A 股实时行情
 
-真正“避免虚假数据”的做法是：只把授权数据源返回的数据标记为可交易依据。
+## 首次部署
 
-- 配置 `ITICK_TOKEN` 后，服务端会尝试走授权行情接口。
-- 没有 `ITICK_TOKEN`，或接口没有返回可识别价格时，接口会返回 `verified:false`。
-- 前端看到 `verified:false` 会自动暂停具体买卖建议，只允许校对持仓。
-- 公开接口和兜底数据不能伪装成实时行情。
+1. 登录 Cloudflare：
 
-基金尤其要注意：很多平台只提供净值或估算净值，不等于支付宝最终确认净值。交易前仍要以支付宝或基金公司确认页为准。
+```bash
+npx wrangler login
+```
 
-## 接入授权行情 Token
+2. 创建 D1 数据库：
 
-拿到 iTick 或兼容服务商的 Token 后，不要写进 GitHub。用本地脚本写入 Render 环境变量：
+```bash
+npx wrangler d1 create family-invest-assistant
+```
+
+把返回的 `database_id` 写进 `wrangler.toml`。
+
+3. 初始化远程数据库表：
+
+```bash
+npx wrangler d1 execute family-invest-assistant --remote --file=./schema.sql
+```
+
+4. 设置密钥：
+
+```bash
+npx wrangler secret put APP_SECRET
+npx wrangler secret put ITICK_TOKEN
+```
+
+`APP_SECRET` 建议用一串很长的随机值。`ITICK_TOKEN` 是行情服务 token，不能提交到仓库。
+
+5. 构建并部署：
+
+```bash
+npm run build
+npx wrangler deploy
+```
+
+## 日常更新
+
+修改前端或 Worker 后，运行：
+
+```bash
+npm run lint
+npm run build
+npm run smoke
+npx wrangler deploy
+```
+
+部署后检查：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/set-render-market-token.ps1 -Token "你的Token"
-tools\render-cli\cli_v2.17.0.exe deploys create srv-d82hdojrjlhs73dh2i8g -o json --confirm
+Invoke-RestMethod "https://family-invest-assistant.wangqizhi131.workers.dev/api/health"
+Invoke-RestMethod "https://family-invest-assistant.wangqizhi131.workers.dev/api/stocks/lookup?code=600000"
 ```
 
-重新部署后检查：
+`/api/health` 应返回：
 
-```powershell
-Invoke-RestMethod "https://family-invest-assistant.onrender.com/api/health"
-Invoke-RestMethod "https://family-invest-assistant.onrender.com/api/market?funds=021190&stocks=sh600000"
+- `ok: true`
+- `storage: "cloudflare-d1"`
+- `hasAuthorizedMarketToken: true`
+- `assetScope: "a-stocks-only"`
+
+## 持久化说明
+
+D1 会保存账号、自选股、持仓和截图导入记录。Render 免费 Web Service 的文件系统是临时的，不再作为长期方案使用。
+
+如果以后要增强截图导入，建议新增 Cloudflare R2 保存原图，再接 OCR 服务识别图片内容；当前版本只保存截图文件名、备注和导入状态，避免把大图片塞进 D1。
+
+## 安全边界
+
+- 登录方式按用户要求简化为真实姓名 + 电话号码，不使用密码。
+- 电话号码相当于登录凭据，不会在页面完整展示。
+- 这是家庭内部工具，不适合作为公开注册网站直接开放给陌生人。
+- 所有具体交易建议都必须基于 `verified:true` 的授权行情；行情失败时宁可提示不可用，也不伪造实时信号。
+
+## GitHub 推送
+
+如果网络代理导致 `git push` SSL 握手失败，可以等网络恢复后运行：
+
+```bash
+git push
 ```
 
-`hasAuthorizedMarketToken` 应为 `true`。具体品种只有在授权接口实际返回价格时才会显示 `verified:true`。
-
-## Render 部署步骤
-
-1. 把这个项目上传到 GitHub 私有仓库。
-2. 在 Render 创建 Blueprint，选择仓库里的 `render.yaml`。
-3. 创建后在环境变量里填入 `ITICK_TOKEN`。
-4. 确认磁盘挂载路径是 `/var/data`。
-5. 部署完成后，Render 会给一个 `https://...onrender.com` 网址，手机直接打开即可。
-
-如果 Render 工作区暂时没有付款方式，可以先用 `render-free.yaml` 创建临时服务。这个版本能得到公网网址，但没有持久化磁盘，服务休眠或重启后账户和持仓可能丢失，只适合试用。
-
-## 永久稳定版
-
-要做到手机和电脑随时登录、服务重启后账户和持仓还在，必须使用 `render.yaml` 的正式配置：
-
-- `plan: starter`
-- `disk.mountPath: /var/data`
-- `DATA_DIR=/var/data`
-
-Render 免费 Web Service 的文件系统是临时的，不能作为长期数据库。当前服务如果仍显示 `DATA_DIR=/tmp/family-invest-data`，说明还不是永久稳定版。
-
-升级步骤：
-
-1. 在 Render 添加付款方式。
-2. 用 `render.yaml` 重新创建或同步服务。
-3. 确认健康接口返回 `dataDir: "/var/data"`。
-4. 再注册正式账号并录入自选、持仓。
-
-后台保存数据时会先写临时文件，再原子替换 `db.json`，并保留 `db.backup-*.json` 备份文件，降低写入中断导致数据损坏的概率。
-
-## 本地快速公网访问
-
-`npm run public` 仍然保留，适合临时给手机试用。但这不是最终方案，因为电脑必须开机，隧道地址也可能变化。
+本地提交已经存在，`git status --short --branch` 可查看当前是否仍领先远端。

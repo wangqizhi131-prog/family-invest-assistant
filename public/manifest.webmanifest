@@ -1,7 +1,7 @@
 {
-  "name": "家庭投资助手",
-  "short_name": "投资助手",
-  "description": "家庭自用的 A 股与基金决策辅助看板",
+  "name": "家庭A股实时助手",
+  "short_name": "A股助手",
+  "description": "家庭自用的 A 股实时行情、持仓和交易建议看板",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f5f7f4",
