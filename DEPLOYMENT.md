@@ -37,6 +37,24 @@ PORT=8787
 
 基金尤其要注意：很多平台只提供净值或估算净值，不等于支付宝最终确认净值。交易前仍要以支付宝或基金公司确认页为准。
 
+## 接入授权行情 Token
+
+拿到 iTick 或兼容服务商的 Token 后，不要写进 GitHub。用本地脚本写入 Render 环境变量：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/set-render-market-token.ps1 -Token "你的Token"
+tools\render-cli\cli_v2.17.0.exe deploys create srv-d82hdojrjlhs73dh2i8g -o json --confirm
+```
+
+重新部署后检查：
+
+```powershell
+Invoke-RestMethod "https://family-invest-assistant.onrender.com/api/health"
+Invoke-RestMethod "https://family-invest-assistant.onrender.com/api/market?funds=021190&stocks=sh600000"
+```
+
+`hasAuthorizedMarketToken` 应为 `true`。具体品种只有在授权接口实际返回价格时才会显示 `verified:true`。
+
 ## Render 部署步骤
 
 1. 把这个项目上传到 GitHub 私有仓库。
