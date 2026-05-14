@@ -94,6 +94,7 @@ try {
   assert.equal(lookup.data.stock.code, '600000')
   assert.equal(lookup.data.stock.market, 'sh')
   assert.ok(lookup.data.stock.name)
+  assert.notEqual(lookup.data.stock.name, '600000')
 
   const watch = await request('/api/watchlist', {
     method: 'POST',

@@ -144,13 +144,30 @@ const normalizeStockInput = (input, existing = {}) => {
   }
 }
 
+const fetchStockName = async (stock) => {
+  try {
+    const url = new URL('https://push2.eastmoney.com/api/qt/ulist.np/get')
+    url.searchParams.set('fltt', '2')
+    url.searchParams.set('invt', '2')
+    url.searchParams.set('fields', 'f12,f14')
+    url.searchParams.set('secids', `${stock.market === 'sh' ? '1' : '0'}.${stock.code}`)
+    const payload = await fetchJson(url)
+    const row = payload?.data?.diff?.find((item) => String(item.f12) === stock.code)
+    return String(row?.f14 || '').trim()
+  } catch {
+    return ''
+  }
+}
+
 const enrichStock = async (stock) => {
   if (!stock.code) return stock
   const quote = await queryItickStock({ market: stock.market, code: stock.code })
+  const metadataName = quote.name && quote.name !== stock.code ? quote.name : await fetchStockName(stock)
+  const name = stock.name && stock.name !== stock.code ? stock.name : metadataName || stock.code
   return {
     ...stock,
-    name: stock.name && stock.name !== stock.code ? stock.name : quote.name || stock.code,
-    theme: stock.theme || autoTheme(stock.code, quote.name),
+    name,
+    theme: stock.theme || autoTheme(stock.code, name),
     quote,
   }
 }
