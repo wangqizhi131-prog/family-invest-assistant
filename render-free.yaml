@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: family-invest-assistant-demo
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: node server.mjs
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: PORT
+        value: 8787
+      - key: DATA_DIR
+        value: /tmp/family-invest-data
+      - key: APP_SECRET
+        generateValue: true
+      - key: MARKET_PROVIDER
+        value: itick
+      - key: STRICT_REALTIME
+        value: true
+      - key: ITICK_BASE_URL
+        value: https://api.itick.org
+      - key: ITICK_FUND_REGION
+        value: CN
+      - key: ITICK_TOKEN
+        sync: false
