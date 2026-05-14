@@ -146,6 +146,16 @@ const stockKey = (stock: Pick<StockBase, 'market' | 'code'>) => `${stock.market}
 const getQuote = (stock: Pick<StockBase, 'code'>, market?: MarketData) => market?.stocks.find((item) => item.code === stock.code)
 const quotePrice = (holding: Holding, quote?: Quote) => quote?.price ?? holding.cost
 const stockValue = (holding: Holding, market?: MarketData) => holding.shares * quotePrice(holding, getQuote(holding, market))
+const marketRefreshMs = () => {
+  const now = new Date()
+  const chinaNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }))
+  const day = chinaNow.getDay()
+  const minutes = chinaNow.getHours() * 60 + chinaNow.getMinutes()
+  const isWeekday = day >= 1 && day <= 5
+  const isMorningSession = minutes >= 9 * 60 + 30 && minutes <= 11 * 60 + 30
+  const isAfternoonSession = minutes >= 13 * 60 && minutes <= 15 * 60
+  return isWeekday && (isMorningSession || isAfternoonSession) ? 30_000 : 60_000
+}
 
 function AuthGate({ onAuth }: { onAuth: (token: string, user: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('register')
@@ -265,14 +275,21 @@ function App() {
 
   useEffect(() => {
     if (!token) return
+    let marketTimer = 0
     const initial = window.setTimeout(() => void refreshMarket(), 0)
     const analysisInitial = window.setTimeout(() => void loadAnalysis(), 500)
-    const timer = window.setInterval(() => void refreshMarket(), 60_000)
+    const scheduleMarketRefresh = () => {
+      marketTimer = window.setTimeout(() => {
+        void refreshMarket()
+        scheduleMarketRefresh()
+      }, marketRefreshMs())
+    }
+    scheduleMarketRefresh()
     const analysisTimer = window.setInterval(() => void loadAnalysis(), 120_000)
     return () => {
       window.clearTimeout(initial)
       window.clearTimeout(analysisInitial)
-      window.clearInterval(timer)
+      window.clearTimeout(marketTimer)
       window.clearInterval(analysisTimer)
     }
   }, [loadAnalysis, refreshMarket, token])
@@ -425,7 +442,7 @@ function App() {
         <span>
           {unverifiedCount
             ? '部分A股未取得可信实时行情，相关交易建议已暂停。'
-            : 'A股行情每60秒刷新，建议仅作家庭内部辅助参考。'}
+            : 'A股行情交易时间每30秒刷新，非交易时间每60秒刷新。'}
         </span>
       </section>
 

@@ -15,7 +15,7 @@ const appSecret = process.env.APP_SECRET || 'local-dev-secret-change-before-clou
 const strictRealtime = String(process.env.STRICT_REALTIME || '').toLowerCase() === 'true'
 const marketProvider = (process.env.MARKET_PROVIDER || 'itick').toLowerCase()
 const quoteCache = new Map()
-const quoteCacheTtlMs = Number(process.env.QUOTE_CACHE_TTL_MS || 45_000)
+const quoteCacheTtlMs = Number(process.env.QUOTE_CACHE_TTL_MS || 30_000)
 
 app.use(cors())
 app.use(express.json({ limit: '12mb' }))

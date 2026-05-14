@@ -1,5 +1,5 @@
 const quoteCache = new Map()
-const quoteCacheTtlMs = 45_000
+const quoteCacheTtlMs = 30_000
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
